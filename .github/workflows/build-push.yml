@@ -22,8 +22,8 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::931814980669:role/GitHubActions-Deployment-Rolee
-          aws-region: eu-north-1
+          role-to-assume: 
+          aws-region: 
 
       - name: Login to ECR
         id: ecr
@@ -40,7 +40,7 @@ jobs:
           sbom: false
           push: true
           build-args: |
-            NEXT_PUBLIC_API_URL=http://image-alb-234781079.eu-north-1.elb.amazonaws.com
+            NEXT_PUBLIC_API_URL=
           tags: |
             ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
             ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
