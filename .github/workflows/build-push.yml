@@ -1,4 +1,4 @@
-name: backend-build-push
+name: Deploy backend
 
 on:
   push:
@@ -6,41 +6,49 @@ on:
   workflow_dispatch:
 
 permissions:
-  id-token: write
+  id-token: write   # OIDC
   contents: read
+
+concurrency:
+  group: deploy-frontend
+  cancel-in-progress: false
 
 env:
   ECR_REPOSITORY: image-service/frontend
+  ECS_CLUSTER: image-service-dev-cluster
+  ECS_SERVICE: image-service-dev-frontend
 
 jobs:
-  build-push:
+  deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{secrets.ROLE_ARN}}
-          aws-region: ${{secrects.AWS_REGION}}
+          role-to-assume: ${{ secrets.ROLE_ARN }}
+          aws-region: ${{ secrets.WS_REGION }}
 
       - name: Login to ECR
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Build and push (latest + git SHA)
+        run: |
+          IMAGE="${{ steps.ecr.outputs.registry }}/${ECR_REPOSITORY}"
+          docker build --platform linux/amd64 -t "$IMAGE:latest" -t "$IMAGE:${GITHUB_SHA}" .
+          docker push --all-tags "$IMAGE"
 
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          provenance: false
-          sbom: false
-          push: true
-          build-args: |
-            NEXT_PUBLIC_API_URL=
-          tags: |
-            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
-            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+      - name: Check ECS service exists
+        id: svc
+        run: |
+          COUNT=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query 'length(services[?status==`ACTIVE`])' --output text 2>/dev/null || echo 0)
+          echo "exists=$([ "$COUNT" = "1" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Redeploy ECS service
+        if: steps.svc.outputs.exists == 'true'
+        run: |
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --force-new-deployment
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
